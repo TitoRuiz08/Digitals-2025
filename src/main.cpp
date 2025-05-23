@@ -1,4 +1,187 @@
 #include <Arduino.h>
+
+#define bot1 ((PIND >> PD2) & 1) // macros para pulsadores
+#define time_40ms 40             // tiempo de comparación para el antirrebote
+#define time_3s 3000             // tiempo de comparación para cuando se mantiene pulsado 3 seg
+#define time_300ms 300           // tiempo que tarda en hacer la caso_cuenta modo RÁPIDO 300ms
+#define time_1s 1000             // tiempo que tarda en contar 1
+
+uint32_t tiempo = 0;
+
+typedef enum
+{
+  BOT_SUELTO,
+  BOT_BAJANDO,
+  BOT_PULSADO,
+  BOT_STILL_PULSADO,
+  BOT_SUBIENDO
+} estado_bot_t;
+
+typedef enum
+{
+  ASCENDENTE,
+  DESCENDENTE
+} direccion_t;
+
+estado_bot_t antirrebote(void); // función para dejar la MEF del antirrebotes adentro
+
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+void conf_timer0(void) // función para configurar el timer0
+{
+  TCCR0A = (1 << WGM01);              // WGM01 = 1, WGM00 = 0 para modo CTC
+  TCCR0B = (1 << CS01) | (1 << CS00); // CS02:0 = 011 para prescaler 64
+  OCR0A = 249;                        // 249 porque el contador inicia en 0 (0 a 249 = 250 ticks)
+  TIMSK0 |= (1 << OCIE0A);
+}
+
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+void conf_puertos(void)
+{
+  DDRB |= ((1 << PB0) | (1 << PB1) | (1 << PB2) | (1 << PB3) | (1 << PB5));
+  DDRD &= ~(1 << PD2); // entrada (pulsador)
+  PORTD |= (1 << PD2); // pull up del pulsador
+}
+
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+
+int main(void)
+{
+  conf_timer0();
+  conf_puertos();
+
+  sei();
+  estado_bot_t boton;
+
+  while (1)
+  {
+    asm("nop");
+    boton = antirrebote();
+    if( boton == BOT_PULSADO){
+      PORTB |= (1<<PB1);
+
+    }else if(boton == BOT_SUELTO){
+      PORTB &= ~(1<<PB1);
+    }else if(boton == BOT_STILL_PULSADO){
+      PORTB |= (1<<PB2);
+    }
+
+  }
+}
+
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+ISR(TIMER0_COMPA_vect)
+{
+
+  tiempo++;
+
+  static uint16_t var = 0;
+
+  var++;
+  if (var > 200)
+  {
+    var = 0;
+    PINB |= (1<<PB0);
+  }
+}
+
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+
+estado_bot_t antirrebote(void)
+{
+  static estado_bot_t estado_bot1 = BOT_SUELTO;
+  static uint32_t timestamp;
+
+  switch (estado_bot1)
+  {
+  //-------------------------------------------------------------------
+  //-------------------------------------------------------------------
+  //-------------------------------------------------------------------
+  case BOT_SUELTO: // suelto
+    if (bot1 == 0) // si pulso, cambio el estado
+    {
+      timestamp = tiempo + time_40ms;
+      estado_bot1 = BOT_BAJANDO;
+    }
+    break;
+  //-------------------------------------------------------------------
+  //-------------------------------------------------------------------
+  //-------------------------------------------------------------------
+  case BOT_BAJANDO: // bajando (detección de pulso bajo)
+
+    if (bot1 != 0)
+    {
+      estado_bot1 = BOT_SUELTO;
+    }
+    if (bot1 == 0 && tiempo >= timestamp)
+    {
+      estado_bot1 = BOT_PULSADO;
+      timestamp = tiempo + time_3s;
+    }
+    break;
+
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+  case BOT_PULSADO: // pulsado
+
+    if (bot1 == 0 && tiempo > timestamp) // si pulso por 3 segundos, cambio de estado a que sigue pulsado
+    {
+      estado_bot1 = BOT_STILL_PULSADO;
+    }
+    else if (bot1 == 1) // sino pasa a subiendo
+    {
+      estado_bot1 = BOT_SUBIENDO;
+    }
+    break;
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+  case BOT_STILL_PULSADO: // sigue abajo
+    if (bot1 != 0)        // si sigue abajo se acelera la caso_cuenta y se hace sola hasta que suelte
+    {
+      estado_bot1 = BOT_PULSADO; // si suelto, vuelve al estado de pulsado
+    }
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+  case BOT_SUBIENDO: // subiendo (detección de pulso alto)
+    if (bot1 == 1)   // si detectó el pulso alto, pasa a suelto
+    {
+      estado_bot1 = BOT_SUELTO;
+      timestamp = tiempo + time_40ms;
+    }
+    else // si no, vuelve a pulsado, detectó un falso pulso alto (rebote)
+    {
+      estado_bot1 = BOT_PULSADO;
+    }
+    break;
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+    //-------------------------------------------------------------------
+
+    default:
+    break;
+  }
+  // hago valer contador2 lo que valga el tiempo del antirrebote para poder hacer la comparación y que de 0
+  return estado_bot1;
+}
+
+
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------
+
+/*
+
+#include <Arduino.h>
 #define bot1 ((PIND >> PD2) & 1) // macros para pulsadores
 #define time_40ms 40             // tiempo de comparación para el antirrebote
 #define time_3s 3000             // tiempo de comparación para cuando se mantiene pulsado 3 seg
@@ -19,22 +202,21 @@ typedef enum
   BOT_STILL_PULSADO,
   BOT_SUBIENDO
 } estado_bot_t;
-/* creo una MEF para el antirrebotes de un botón
-BOT_SUELTO (botón no presionado)
-BOT_BAJANDO (detección de pulso bajo)
-BOT_PULSADO (botón presionado)
-BOT_STILL_PULSADO (si se mantiene pulsado por 3 segundos acelera la caso_cuenta)
-BOT_SUBIENDO (detección de pulso alto)  */
+creo una MEF para el antirrebotes de un botón
+// BOT_SUELTO (botón no presionado)
+// BOT_BAJANDO (detección de pulso bajo)
+// BOT_PULSADO (botón presionado)
+// BOT_STILL_PULSADO (si se mantiene pulsado por 3 segundos acelera la caso_cuenta)
+// BOT_SUBIENDO (detección de pulso alto)
 
 typedef enum
 {
   ASCENDENTE,
   DESCENDENTE
 } direccion_t;
-/*MEF para la dirección de la caso_cuenta
-ASCENDENTE (caso_cuenta para arriba)
-DESCENDENTE (caso_cuenta para abajo)
-*/
+// MEF para la dirección de la caso_cuenta
+// ASCENDENTE (caso_cuenta para arriba)
+// DESCENDENTE (caso_cuenta para abajo)
 
 estado_bot_t estado_bot1 = BOT_SUELTO;
 direccion_t direccion_cuenta = ASCENDENTE;
@@ -48,15 +230,6 @@ uint8_t caso_cuenta = 0;
 
 int main()
 {
-  conf_timer0(); // invoco las funciones
-  conf_puertos();
-
-  sei(); // habilitar interrupciones globales
-
-  contador1 = time_bounce; // igualo contador1 a tiempo del antirrebote
-  contador2 = contador1;   // igualo contador2 a contador1
-  // esto se hace para que siempre haya 1 de diferencia cuando lo comparo contra 40ms
-
   while (1)
   {
     asm("nop");
@@ -138,11 +311,11 @@ void antirrebote(void)
   case BOT_BAJANDO: // bajando (detección de pulso bajo)
     if (bot1 == 0)  // si detectó pulso bajo y pasaron 40ms, cambio el estado a pulsado
     {
-      /* llamo a una función caso_cuenta por ejemplo, lo que hace es devolverme un valor que valga de 0 a 15
-      ejemplo: uint8_T caso_cuenta();
-     la salida de caso_cuenta, PORTB = (caso_cuenta() & 0x0F);
+    //   llamo a una función caso_cuenta por ejemplo, lo que hace es devolverme un valor que valga de 0 a 15
+    //   ejemplo: uint8_T caso_cuenta();
+    //  la salida de caso_cuenta, PORTB = (caso_cuenta() & 0x0F);
 
-       */
+
       if (bot1 == 0) // si detectó pulso bajo, cambio el estado a pulsado
       {
         estado_bot1 = BOT_PULSADO;
@@ -192,17 +365,6 @@ void antirrebote(void)
     contador2 = time_bounce; // hago valer contador2 lo que valga el tiempo del antirrebote para poder hacer la comparación y que de 0
   }
 }
-void conf_timer0(void) // función para configurar el timer0
-{
-  TCCR0A |= (1 << WGM01);              // modo CTC
-  TCCR0B |= (1 << CS01) | (1 << CS00); // prescaler 64
-  OCR0A = 249;                         // valor de comparación para 1ms
-  TIMSK0 |= (1 << OCIE0A);             // habilitar interrupción para el contador A
-}
 
-void conf_puertos(void)
-{
-  DDRB |= ((1 << PB0) | (1 << PB1) | (1 << PB2) | (1 << PB3) | (1 << PB5));
-  DDRD &= ~(1 << PD2); // entrada (pulsador)
-  PORTD |= (1 << PD2); // pull up del pulsador
-}
+
+*/
