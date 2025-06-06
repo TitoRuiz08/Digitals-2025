@@ -6,11 +6,15 @@
 #define time_300ms 300           // tiempo que tarda en hacer la caso_cuenta modo RÁPIDO 300ms
 #define time_1s 1000             // tiempo que tarda en contar 1
 
+#define set_bit(sfr, bit) sfr |= (1 << bit)
+#define reset_bit(sfr, bit) sfr &= ~(1 << bit)
+
 uint32_t tiempo = 0;
 
 typedef enum
 {
   BOT_SUELTO,
+  BOT_REBOTANDO_ABAJO,
   BOT_BAJANDO,
   BOT_PULSADO,
   BOT_STILL_PULSADO,
@@ -23,7 +27,9 @@ typedef enum
   DESCENDENTE
 } direccion_t;
 
-estado_bot_t antirrebote(void); // función para dejar la MEF del antirrebotes adentro
+estado_bot_t antirrebote(void); // función para dejar la MEF del antirrebotes adentro+
+
+uint8_t cuenta(uint8_t limite);
 
 //---------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------
@@ -39,7 +45,7 @@ void conf_timer0(void) // función para configurar el timer0
 //---------------------------------------------------------------------------------------
 void conf_puertos(void)
 {
-  DDRB |= ((1 << PB0) | (1 << PB1) | (1 << PB2) | (1 << PB3) | (1 << PB5));
+  DDRB |= ((1 << PB0) | (1 << PB1) | (1 << PB2) | (1 << PB3));
   DDRD &= ~(1 << PD2); // entrada (pulsador)
   PORTD |= (1 << PD2); // pull up del pulsador
 }
@@ -60,16 +66,23 @@ int main(void)
   while (1)
   {
     asm("nop");
+
     boton = antirrebote();
-    if( boton == BOT_PULSADO){
-      PORTB |= (1<<PB1);
+    if (boton == BOT_BAJANDO)
+    {
+      // PORTB = 0x00;
 
-    }else if(boton == BOT_SUELTO){
-      PORTB &= ~(1<<PB1);
-    }else if(boton == BOT_STILL_PULSADO){
-      PORTB |= (1<<PB2);
+      PORTB = cuenta(15) & 0x0F; // enmascaro el valor de caso_cuenta cada vez que cambia
+                                   // con los pines que quiero ver de salida para que se haga en orden.
     }
-
+    // else if (boton == BOT_SUELTO)
+    // {
+    //   PORTB &= ~(1 << PB1);
+    // }
+    // else if (boton == BOT_STILL_PULSADO)
+    // {
+    //   PORTB |= (1 << PB2);
+    // }
   }
 }
 
@@ -79,15 +92,35 @@ ISR(TIMER0_COMPA_vect)
 {
 
   tiempo++;
+}
 
-  static uint16_t var = 0;
+uint8_t cuenta(uint8_t limite)
+{
+  static uint8_t cuenta=0;
+  static direccion_t direccion_cuenta = ASCENDENTE;
 
-  var++;
-  if (var > 200)
+  if (cuenta >= limite) // si contó hasta 15
   {
-    var = 0;
-    PINB |= (1<<PB0);
+    direccion_cuenta = DESCENDENTE; // le cambio el estado a direccion_cuenta a DESCENDENTE para que cuente de esa forma
   }
+  else if (cuenta == 0) // si contó hasta 0
+  {
+    direccion_cuenta = ASCENDENTE; // hago que cuente de manera ascendente
+  }
+
+  
+  
+  if (direccion_cuenta == ASCENDENTE)
+  { // si el estado de direccion_cuenta es ASCENDENTE
+    cuenta++; // aumento el valor de caso_cuenta para que llegue hasta 15
+  }
+
+  if (direccion_cuenta == DESCENDENTE) // si direccion_cuenta está en DESCENDENTE
+  {
+    cuenta--; // decremento caso_cuenta para que cuente hasta 0
+  }
+
+  return cuenta;
 }
 
 //---------------------------------------------------------------------------------------
@@ -107,13 +140,14 @@ estado_bot_t antirrebote(void)
     if (bot1 == 0) // si pulso, cambio el estado
     {
       timestamp = tiempo + time_40ms;
-      estado_bot1 = BOT_BAJANDO;
+      estado_bot1 = BOT_REBOTANDO_ABAJO;
     }
     break;
   //-------------------------------------------------------------------
   //-------------------------------------------------------------------
   //-------------------------------------------------------------------
-  case BOT_BAJANDO: // bajando (detección de pulso bajo)
+  case BOT_REBOTANDO_ABAJO:
+
 
     if (bot1 != 0)
     {
@@ -121,9 +155,17 @@ estado_bot_t antirrebote(void)
     }
     if (bot1 == 0 && tiempo >= timestamp)
     {
-      estado_bot1 = BOT_PULSADO;
+      estado_bot1 = BOT_BAJANDO;
       timestamp = tiempo + time_3s;
     }
+    break;
+  //-------------------------------------------------------------------
+  //-------------------------------------------------------------------
+  //-------------------------------------------------------------------
+  case BOT_BAJANDO: // bajando (detección de pulso bajo)
+
+      estado_bot1 = BOT_PULSADO;
+
     break;
 
     //-------------------------------------------------------------------
@@ -166,13 +208,12 @@ estado_bot_t antirrebote(void)
     //-------------------------------------------------------------------
     //-------------------------------------------------------------------
 
-    default:
+  default:
     break;
   }
-  // hago valer contador2 lo que valga el tiempo del antirrebote para poder hacer la comparación y que de 0
+
   return estado_bot1;
 }
-
 
 //---------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------
@@ -241,7 +282,7 @@ int main()
                     // antes de que se escriba el dato nuevo
                     // se puede hacer de esa manera o así "PORTB &=~ ((1<<PB0) | (1<<PB1) | (1<<PB2) | (1<<PB3))"
 
-      PORTB = (cuenta(15) & 0x0F); // enmascaro el valor de caso_cuenta cada vez que cambia
+      PORTB = (cuenta(15) & 0xF0); // enmascaro el valor de caso_cuenta cada vez que cambia
                                    // con los pines que quiero ver de salida para que se haga en orden.
     }
     else if (estado_bot1 == BOT_STILL_PULSADO) // si mantengo pulsado
